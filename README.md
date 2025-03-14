@@ -2,6 +2,8 @@
 
 CLI tool to create and manage [aeza.net](https://aeza.net/?ref=397668) virtual machines.
 
+![screenshot](screenshot.png)
+
 # Usage
 
 ```
