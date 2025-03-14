@@ -26,12 +26,12 @@ aeza ip [vm_id/name] - get the IP address of a virtual machine
 ```shell
 # macOS
 brew install jq curl sshpass bc
-sudo wget [link to script] -O /usr/local/bin/aeza
+sudo wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aezacli -O /usr/local/bin/aeza
 sudo chmod +x /usr/local/bin/aeza
 
 # Ubuntu/Debian
 apt install jq curl sshpass bc
-sudo wget [link to script] -O /usr/bin/aeza
+sudo wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aezacli -O /usr/bin/aeza
 sudo chmod +x /usr/bin/aeza
 ```
 
