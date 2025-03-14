@@ -1,0 +1,684 @@
+#!/bin/bash
+
+# Configuration file path
+CONFIG_FILE="$HOME/.aezacli"
+
+# Check if config file exists and load API key
+load_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Error: Configuration file not found at $CONFIG_FILE"
+        echo "Please create the file with your API key"
+        exit 1
+    fi
+    API_KEY=$(cat "$CONFIG_FILE")
+    if [ -z "$API_KEY" ]; then
+        echo "Error: API key not found in configuration file"
+        exit 1
+    fi
+}
+
+# Function to list all virtual machines
+list_vms() {
+    load_config
+    # Make API call and store response
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services?count=1000")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # If json argument is provided, output filtered JSON with only necessary fields
+    if [ "$1" = "json" ]; then
+        echo "$response" | jq '.data.items[] | select(.product.type != "domain" and .product.type != "dedicated" and .product.type != "waf" and .product.type != "vpn" and .product.type != "" and .product.type != "s3" and .product.type !="soft") | {id: .id, name: .name, ip: (.ip // "-"), status: .status, plan: .product.name}' | jq -s .
+        return
+    fi
+    
+    # Print header
+    printf "%-10s %-20s %-15s %-20s %-10s\n" "ID" "NAME" "IP" "STATUS" "PLAN"
+    printf "%s\n" "$(printf '=%.0s' {1..75})"
+    
+    # Parse and display each VM
+    echo "$response" | jq -r '.data.items[] | select(.product.type != "domain" and .product.type != "dedicated" and .product.type != "waf" and .product.type != "vpn" and .product.type != "" and .product.type != "s3" and .product.type !="soft") | "\(.id) \(.name) \(.ip // "-") \(.status) \(.product.name)"' | \
+    while read -r id name ip status price; do
+        printf "%-10s %-20s %-15s %-20s %-10s\n" "$id" "$name" "$ip" "$status" "$price"
+    done
+}
+
+# Function to list resource limits
+list_limits() {
+    load_config
+    # Make API call and store response
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services/limits")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # If json argument is provided, output raw JSON
+    if [ "$1" = "json" ]; then
+        echo "$response" | jq '.data.items[] | {id: .id, name: .name, available: .available, used: .used}' | jq -s .
+        return
+    fi
+    
+    # Print header
+    printf "%-5s %-20s %-10s %-10s\n" "ID" "NAME" "AVAILABLE" "USED"
+    printf "%s\n" "$(printf '=%.0s' {1..50})"
+    
+    # Parse and display each limit
+    echo "$response" | jq -r '.data.items[] | [.id, .name, .available, .used] | @tsv' | \
+    while IFS=$'\t' read -r id name available used; do
+        printf "%-5s %-20s %-10s %-10s\n" "$id" "${name:0:19}" "$available" "$used"
+    done
+}
+
+# Function to get VM ID by name or return the ID if it's already an ID
+get_vm_id() {
+    # If the argument is a number, assume it's already an ID
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+        echo "$1"
+        return 0
+    fi
+    
+    # Otherwise, try to find a VM with the given name
+    load_config
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services?count=1000")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API" >&2
+        exit 1
+    fi
+    
+    # Try to find VM by name
+    vm_id=$(echo "$response" | jq -r --arg name "$1" '.data.items[] | select(.name == $name) | .id')
+    
+    # Check if we found a VM with the given name
+    if [ -z "$vm_id" ] || [ "$vm_id" = "null" ]; then
+        echo "Error: Could not find VM with name: $1" >&2
+        exit 1
+    fi
+    
+    echo "$vm_id"
+    return 0
+}
+
+# Function to list available operating systems
+list_os() {
+    load_config
+    # Make API call and store response
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/os")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # If json argument is provided, output raw JSON
+    if [ "$1" = "json" ]; then
+        echo "$response" | jq '.data.items[] | {name: .name, group: .group, enabled: .enabled, id: .slug}' | jq -s .
+        return
+    fi
+    
+    # Print header
+    printf "%-35s %-15s %-10s %-10s\n" "NAME" "GROUP" "ENABLED" "ID"
+    printf "%s\n" "$(printf '=%.0s' {1..75})"
+    
+    # Parse and display each OS
+    echo "$response" | jq -r '.data.items[] | [.name, .group, .enabled, .slug] | join("\t")' | \
+    while IFS=$'\t' read -r name group enabled id; do
+        printf "%-35s %-15s %-10s %-10s\n" "$name" "$group" "$enabled" "$id"
+    done
+}
+
+# Function to generate a random name for VMs
+generate_random_name() {
+    # Arrays of adjectives and nouns for name generation
+    adjectives=("happy" "swift" "bright" "cool" "smart" "quick" "calm" "bold" "wise" "kind")
+    nouns=("fox" "bear" "wolf" "hawk" "lion" "tiger" "eagle" "deer" "owl" "seal")
+    
+    # Get random elements
+    adj=${adjectives[$((RANDOM % ${#adjectives[@]}))]} 
+    noun=${nouns[$((RANDOM % ${#nouns[@]}))]}
+    
+    # Combine elements with a random number
+    echo "${adj}-${noun}"
+}
+
+# Function to get product ID by name or return the ID if it's already an ID
+get_product_id() {
+    # If the argument is a number, assume it's already an ID
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+        echo "$1"
+        return 0
+    fi
+    
+    # Otherwise, try to find a product with the given name
+    load_config
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services/products")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API" >&2
+        exit 1
+    fi
+    
+    # Try to find product by name
+    product_id=$(echo "$response" | jq -r --arg name "$1" '.data.items[] | select(.name == $name and .type != "domain" and .type != "dedicated" and .type != "waf" and .type != "vpn" and .type != "" and .type != "s3" and .type !="soft" and .group.payload.isDisabled != true) | .id')
+    
+    # Check if we found a product with the given name
+    if [ -z "$product_id" ] || [ "$product_id" = "null" ]; then
+        echo "Error: Could not find product with name: $1" >&2
+        exit 1
+    fi
+    
+    echo "$product_id"
+    return 0
+}
+
+# Function to create a new virtual machine
+create_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: Plan not specified"
+        echo "Usage: aeza create [plan_id/name] [os_id]"
+        exit 1
+    fi
+
+    if [ -z "$2" ]; then
+        echo "Error: OS ID not specified"
+        echo "Usage: aeza create [plan_id/name] [os_id]"
+        echo "Use 'aeza os' to list available operating systems"
+        exit 1
+    fi
+    
+    # Get product ID (either directly or by looking up the name)
+    product_id=$(get_product_id "$1")
+
+    # Generate a random name for the VM using a more reliable method
+    random_name=$(generate_random_name)
+    
+    # Prepare the JSON payload
+    payload=$(jq -n \
+        --arg name "$random_name" \
+        --arg product_id "$product_id" \
+        --arg os "$2" \
+        '{"method":"balance","count":1,"term":"hour","name":$name,"productId":($product_id|tonumber),"parameters":{"recipe":null,"os":$os,"isoUrl":""},"autoProlong":false,"backups":true}')
+
+    # Make API call to create VM
+    response=$(curl -s -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "https://my.aeza.net/api/services/orders")
+
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error creating VM: $error_message"
+        exit 1
+    fi
+
+    echo "$random_name"
+}
+
+list_products() {
+    load_config
+    # Make API call and store response
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services/products")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # If json argument is provided, output raw JSON
+    if [ "$1" = "json" ]; then
+        echo "$response"
+        return
+    fi
+    
+    # Print header
+    printf "%-5s %-10s %-15s %-15s %-10s %-10s %-10s\n" "ID" "NAME" "TYPE" "PRICE PER HOUR" "CPU" "RAM" "ROM"
+    printf "%s\n" "$(printf '=%.0s' {1..85})"
+    
+    # Parse and display each product
+    echo "$response" | jq -r '.data.items[] | select(.type != "domain" and .type != "dedicated" and .type != "waf" and .type != "vpn" and .type != "" and .type != "s3" and .type !="soft" and .group.payload.isDisabled != true) | [.id, .name, .typeObject.names.en, (.prices.hour.value // .prices.month.value), .summaryConfiguration.cpu.base, .summaryConfiguration.ram.base, .summaryConfiguration.rom.base] | @tsv' | \
+    while IFS=$'\t' read -r id name type price cpu ram rom; do
+        # Convert price from cents to euros
+        price_euro=$(echo "scale=2; $price/100" | bc)
+        printf "%-5s %-10s %-15s %-15s %-10s %-10s %-10s\n" "$id" "${name:0:19}" "${type:0:14}" "0${price_euro}€" "${cpu}X" "${ram} GB" "${rom} GB"
+    done
+}
+
+# Function to start a virtual machine
+start_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID or name not specified"
+        echo "Usage: aeza start [vm_id/name]"
+        exit 1
+    fi
+    
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    echo "Starting virtual machine: $1 (ID: $vm_id)"
+    
+    # Prepare the JSON payload
+    payload='{"action":"resume"}'
+    
+    # Make API call to start VM
+    response=$(curl -s -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "https://my.aeza.net/api/services/$vm_id/ctl")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error starting VM: $error_message"
+        exit 1
+    fi
+    
+    echo "Successfully started VM: $1 (ID: $vm_id)"
+}
+
+# Function to stop a virtual machine
+stop_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID or name not specified"
+        echo "Usage: aeza stop [vm_id/name]"
+        exit 1
+    fi
+    
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    echo "Stopping virtual machine: $1 (ID: $vm_id)"
+    
+    # Prepare the JSON payload
+    payload='{"action":"suspend"}'
+    
+    # Make API call to stop VM
+    response=$(curl -s -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "https://my.aeza.net/api/services/$vm_id/ctl")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error stopping VM: $error_message"
+        exit 1
+    fi
+    
+    echo "Successfully stopped VM: $1 (ID: $vm_id)"
+}
+
+# Function to delete a virtual machine
+delete_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID or name not specified"
+        echo "Usage: aeza delete [vm_id/name]"
+        exit 1
+    fi
+    
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    echo "Deleting virtual machine: $1 (ID: $vm_id)"
+    
+    # Make API call to delete VM
+    response=$(curl -s -X DELETE \
+        -H "X-API-Key: $API_KEY" \
+        "https://my.aeza.net/api/services/$vm_id")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error deleting VM: $error_message"
+        exit 1
+    fi
+    
+    echo "Initiated deletion of VM: $1 (ID: $vm_id)"
+}
+
+# Function to reboot a virtual machine
+reboot_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID or name not specified"
+        echo "Usage: aeza reboot [vm_id/name]"
+        exit 1
+    fi
+    
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    echo "Rebooting virtual machine: $1 (ID: $vm_id)"
+    
+    # Prepare the JSON payload
+    payload='{"action":"reboot"}'
+    
+    # Make API call to reboot VM
+    response=$(curl -s -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "https://my.aeza.net/api/services/$vm_id/ctl")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error rebooting VM: $error_message"
+        exit 1
+    fi
+    
+    echo "Successfully rebooted VM: $1 (ID: $vm_id)"
+}
+
+# Function to rename a virtual machine
+rename_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID or name not specified"
+        echo "Usage: aeza rename [vm_id/name] [new_name]"
+        exit 1
+    fi
+    
+    if [ -z "$2" ]; then
+        echo "Error: New name not specified"
+        echo "Usage: aeza rename [vm_id/name] [new_name]"
+        exit 1
+    fi
+    
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    echo "Renaming virtual machine: $1 (ID: $vm_id) to $2"
+    
+    # Prepare the JSON payload
+    payload=$(jq -n --arg name "$2" '{"name":$name}')
+    
+    # Make API call to rename VM
+    response=$(curl -s -X PUT \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "https://my.aeza.net/api/services/$vm_id")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+    
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error renaming VM: $error_message"
+        exit 1
+    fi
+    
+    echo "Successfully renamed VM to: $2"
+}
+
+# Function to connect to a virtual machine via SSH
+ssh_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID/name or IP not specified"
+        echo "Usage: aeza ssh [vm_id/name/ip] [command]"
+        exit 1
+    fi
+
+    # Check if the argument is an IP address
+    if [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # It's an IP address, use it directly
+        ip="$1"
+        # We need to find the VM with this IP to get username and password
+        response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services?count=1000")
+        
+        # Check if response is valid JSON
+        if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+            echo "Error: Invalid response from API"
+            exit 1
+        fi
+        
+        # Find VM with this IP
+        vm_data=$(echo "$response" | jq -r --arg ip "$1" '.data.items[] | select(.ip == $ip)')
+        
+        if [ -z "$vm_data" ] || [ "$vm_data" = "" ]; then
+            echo "Error: Could not find VM with IP: $1"
+            exit 1
+        fi
+        
+        username=$(echo "$vm_data" | jq -r '.parameters.username')
+        password=$(echo "$vm_data" | jq -r '.secureParameters.data.password')
+    else
+        # It's a VM ID or name, get the VM ID first
+        vm_id=$(get_vm_id "$1")
+        
+        # Make API call to get VM information
+        response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services/$vm_id")
+        
+        # Check if response is valid JSON
+        if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+            echo "Error: Invalid response from API"
+            exit 1
+        fi
+        
+        ip=$(echo "$response" | jq -r '.data.items[0].ip')
+        username=$(echo "$response" | jq -r '.data.items[0].parameters.username')
+        password=$(echo "$response" | jq -r '.data.items[0].secureParameters.data.password')
+    fi
+    
+    # Check if we got all required information
+    if [ -z "$ip" ] || [ "$ip" = "null" ] || [ -z "$username" ] || [ "$username" = "null" ] || [ -z "$password" ] || [ "$password" = "null" ]; then
+        echo "Error: Could not retrieve connection details for VM"
+        exit 1
+    fi
+
+    if ! command -v sshpass &> /dev/null; then
+        echo "Error: sshpass is not installed. Please install it first."
+        exit 1
+    fi
+    
+    if [ $# -gt 1 ]; then
+        shift
+        SSHPASS="$password" sshpass -e ssh -o StrictHostKeyChecking=no "$username@$ip" "$@"
+    else
+        # Just establish an interactive SSH session
+        SSHPASS="$password" sshpass -e ssh -o StrictHostKeyChecking=no "$username@$ip"
+    fi
+}
+
+# Function to wait for a virtual machine to become active
+wait_vm() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: VM ID or name not specified"
+        echo "Usage: aeza wait [vm_id/name]"
+        exit 1
+    fi
+    
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    echo "Waiting for virtual machine: $1 (ID: $vm_id) to become active..."
+    
+    while true; do
+        # Make API call to get VM status
+        response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/services/$vm_id")
+        
+        # Check if response is valid JSON
+        if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+            echo "Error: Invalid response from API"
+            exit 1
+        fi
+        
+        # Get VM status
+        status=$(echo "$response" | jq -r '.data.items[0].status')
+        
+        # Check if we got the status
+        if [ -z "$status" ] || [ "$status" = "null" ]; then
+            echo "Error: Could not retrieve VM status"
+            exit 1
+        fi
+        
+        # If status is active, we're done
+        if [ "$status" = "active" ]; then
+            echo "VM is now active!"
+            break
+        fi
+        
+        echo "Current status: $status. Checking again in 5 seconds..."
+        sleep 5
+    done
+}
+
+# Function to get VM IP by name
+get_vm_ip() {
+    if [ -z "$1" ]; then
+        echo "Error: VM name not specified" >&2
+        echo "Usage: aeza ip [vm_name]" >&2
+        exit 1
+    fi
+    
+    load_config
+    # Get VM ID (either directly or by looking up the name)
+    vm_id=$(get_vm_id "$1")
+    
+    # Make API call to get VM information using the control endpoint
+    response=$(curl -s -X GET \
+        -H "X-API-Key: $API_KEY" \
+        "https://my.aeza.net/api/services/$vm_id")
+    
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API" >&2
+        exit 1
+    fi
+    
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error getting VM IP: $error_message" >&2
+        exit 1
+    fi
+
+    # Extract IP address from response
+    ip=$(echo "$response" | jq -r '.data.items[0].ip')
+
+    # Check if IP was found
+    if [ -z "$ip" ] || [ "$ip" = "null" ]; then
+        echo "Error: Could not retrieve IP address for VM" >&2
+        exit 1
+    fi
+
+    # Output the IP address
+    echo "$ip"
+    return 0
+}
+
+case "$1" in
+    "list")
+        list_vms "$2"
+        ;;
+    "os")
+        list_os "$2"
+        ;;
+    "ip")
+        get_vm_ip "$2"
+        ;;
+    "limits")
+        list_limits "$2"
+        ;;
+    "create")
+        create_vm "$2" "$3"
+        ;;
+    "start")
+        start_vm "$2"
+        ;;
+    "stop")
+        stop_vm "$2"
+        ;;
+    "delete")
+        delete_vm "$2"
+        ;;
+    "products")
+        list_products "$2"
+        ;;
+    "reboot")
+        reboot_vm "$2"
+        ;;
+    "rename")
+        rename_vm "$2" "$3"
+        ;;
+    "ssh")
+        ssh_vm "$2" "${@:3}"
+        ;;
+    "wait")
+        wait_vm "$2"
+        ;;
+    *)
+        echo ""
+        echo "Usage:"
+        echo "  aeza os - list available operating systems"
+        echo "  aeza limits - list resource limits"
+        echo "  aeza products - list available products"
+        echo "  "
+        echo "  aeza list - list all virtual machines"
+        echo "  aeza create [plan] [os_id] - create a new virtual machine"
+        echo "  aeza start [vm_id/name] - start a virtual machine"
+        echo "  aeza stop [vm_id/name] - stop a virtual machine"
+        echo "  aeza delete [vm_id/name] - delete a virtual machine"
+        echo "  aeza reboot [vm_id/name] - reboot a virtual machine"
+        echo "  aeza rename [vm_id/name] [new_name] - rename a virtual machine"
+        echo "  aeza ssh [vm_id/name/ip] [command] - connect to a virtual machine via SSH or execute a command"
+        echo "  aeza wait [vm_id/name] - wait for a virtual machine to become active"
+        echo "  aeza ip [vm_id/name] - get the IP address of a virtual machine"
+        echo ""
+        exit 0
+        ;;
+esac
