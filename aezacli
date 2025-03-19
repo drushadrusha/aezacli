@@ -245,7 +245,7 @@ list_products() {
     
     # If json argument is provided, output raw JSON
     if [ "$1" = "json" ]; then
-        echo "$response"
+        echo "$response" | jq '.data.items[] | select(.type != "domain" and .type != "dedicated" and .type != "waf" and .type != "vpn" and .type != "" and .type != "s3" and .type !="soft" and .group.payload.isDisabled != true) | {name: .name, type: .type}' | jq -s .
         return
     fi
     

@@ -35,6 +35,9 @@ sudo chmod +x /usr/local/bin/aeza
 apt install jq curl sshpass bc
 sudo wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aezacli -O /usr/bin/aeza
 sudo chmod +x /usr/bin/aeza
+
+# If you use fish, you can enable autocompletions
+sudo wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aeza.fish -O ~/.config/fish/completions/aeza.fish
 ```
 
 # Configuration
