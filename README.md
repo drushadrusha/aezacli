@@ -11,7 +11,7 @@ aeza os - list available operating systems
 aeza limits - list resource limits
 aeza products - list available products
 
-aeza list - list all virtual machines
+aeza list / aeza ps - list all virtual machines
 aeza create [plan] [os_id] - create a new virtual machine
 aeza start [vm_id/name] - start a virtual machine
 aeza stop [vm_id/name] - stop a virtual machine
@@ -35,9 +35,6 @@ sudo chmod +x /usr/local/bin/aeza
 apt install jq curl sshpass bc
 sudo wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aezacli -O /usr/bin/aeza
 sudo chmod +x /usr/bin/aeza
-
-# If you use fish, you can enable autocompletions
-sudo wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aeza.fish -O ~/.config/fish/completions/aeza.fish
 ```
 
 # Configuration
@@ -61,4 +58,14 @@ server_ip=$(aeza ip "$server_name")
 curl "$server_ip"
 # Delete the server
 aeza delete "$server_name"
+```
+
+# Autocompletions
+
+```shell
+# Autocompletion for fish
+wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aeza.fish -O ~/.config/fish/completions/aeza.fish
+# Autocompletion for bash
+wget https://raw.githubusercontent.com/drushadrusha/aezacli/refs/heads/master/aeza.fish -O ~/.bash_completion_aeza
+echo "source ~/.bash_completion_aeza" >> ~/.bashrc
 ```

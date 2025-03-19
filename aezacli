@@ -625,6 +625,9 @@ case "$1" in
     "list")
         list_vms "$2"
         ;;
+    "ps")
+        list_vms "$2"
+        ;;
     "os")
         list_os "$2"
         ;;
@@ -668,7 +671,7 @@ case "$1" in
         echo "  aeza limits - list resource limits"
         echo "  aeza products - list available products"
         echo "  "
-        echo "  aeza list - list all virtual machines"
+        echo "  aeza list (or aeza ps) - list all virtual machines"
         echo "  aeza create [plan] [os_id] - create a new virtual machine"
         echo "  aeza start [vm_id/name] - start a virtual machine"
         echo "  aeza stop [vm_id/name] - stop a virtual machine"
