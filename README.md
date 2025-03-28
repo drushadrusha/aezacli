@@ -21,6 +21,7 @@ aeza rename [vm_id/name] [new_name] - rename a virtual machine
 aeza ssh [vm_id/name/] [command] - connect to a virtual machine via SSH or execute a command
 aeza wait [vm_id/name] - wait for a virtual machine to become active
 aeza ip [vm_id/name] - get the IP address of a virtual machine
+aeza key [list|add|delete] [key_id] [public_key] - manage account SSH keys
 ```
 
 # Installation

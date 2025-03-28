@@ -2,6 +2,7 @@
 
 # Configuration file path
 CONFIG_FILE="$HOME/.aezacli"
+CONFIG_FILE_SUPPORT="$HOME/.aezacli_support"
 
 # Check if config file exists and load API key
 load_config() {
@@ -11,6 +12,19 @@ load_config() {
         exit 1
     fi
     API_KEY=$(cat "$CONFIG_FILE")
+    if [ -z "$API_KEY" ]; then
+        echo "Error: API key not found in configuration file"
+        exit 1
+    fi
+}
+
+load_config_support() {
+    if [ ! -f "$CONFIG_FILE_SUPPORT" ]; then
+        echo "Error: Configuration file not found at $CONFIG_FILE_SUPPORT"
+        echo "Please create the file with your API key"
+        exit 1
+    fi
+    API_KEY=$(cat "$CONFIG_FILE_SUPPORT")
     if [ -z "$API_KEY" ]; then
         echo "Error: API key not found in configuration file"
         exit 1
@@ -635,8 +649,106 @@ get_vm_ip() {
     return 0
 }
 
-close_ticket() {
+list_ssh_keys() {
     load_config
+    response=$(curl -s -H "X-API-Key: $API_KEY" "https://my.aeza.net/api/sshkeys")
+
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+
+    if [ "$2" = "json" ]; then
+        echo "$response" | jq '.data.items[] | {id: .id, name: .name, pubKey: .pubKey}' | jq -s .
+        return
+    fi
+
+    # Выводим только ключи построчно
+    echo "$response" | jq -r '.data.items[].pubKey'
+}
+
+add_ssh_key() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: Key name not specified"
+        echo "Usage: aeza ssh-add [key_name] [public_key]"
+        exit 1
+    fi
+
+    if [ -z "$2" ]; then
+        echo "Error: Public key not specified"
+        echo "Usage: aeza ssh-add [key_name] [public_key]"
+        exit 1
+    fi
+
+    key_name="$1"
+    public_key="$2"
+
+    # Prepare the JSON payload
+    payload=$(jq -n \
+        --arg name "$key_name" \
+        --arg pubKey "$public_key" \
+        '{"name":$name,"pubKey":$pubKey}')
+
+    # Make API call to add SSH key
+    response=$(curl -s -X POST \
+        -H "X-API-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "https://my.aeza.net/api/sshkeys")
+
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error adding SSH key: $error_message"
+        exit 1
+    fi
+
+    echo "Successfully added SSH key: $key_name"
+}
+
+delete_ssh_key() {
+    load_config
+    if [ -z "$1" ]; then
+        echo "Error: Key ID not specified"
+        echo "Usage: aeza ssh-delete [key_id]"
+        exit 1
+    fi
+
+    key_id="$1"
+
+    # Make API call to delete SSH key
+    response=$(curl -s -X DELETE \
+        -H "X-API-Key: $API_KEY" \
+        "https://my.aeza.net/api/sshkeys/$key_id")
+
+    # Check if response is valid JSON
+    if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+        echo "Error: Invalid response from API"
+        exit 1
+    fi
+
+    # Check for errors in response
+    if echo "$response" | jq -e '.error' >/dev/null 2>&1; then
+        error_message=$(echo "$response" | jq -r '.error')
+        echo "Error deleting SSH key: $error_message"
+        exit 1
+    fi
+
+    echo "Successfully deleted SSH key with ID: $key_id"
+}
+
+#
+#   Support functions
+#
+
+close_ticket() {
     if [ -z "$1" ]; then
         echo "Error: Ticket ID not specified"
         echo "Usage: aeza ticket close [ticket_id]"
@@ -646,7 +758,7 @@ close_ticket() {
     ticket_id="$1"
     echo "Closing ticket: $ticket_id"
 
-    load_config
+    load_config_support
     
     # Make API call to close ticket
     response=$(curl -s -X POST \
@@ -679,7 +791,7 @@ unblock_ticket() {
     ticket_id="$1"
     echo "Unblocking ticket: $ticket_id"
 
-    load_config
+    load_config_support
 
     # Make API call to unblock ticket
     response=$(curl -s -X POST -H "Authorization: Bearer $API_KEY" \
@@ -706,7 +818,7 @@ message_to_ticket() {
     ticket_id="$1"
     message="$2"
     echo "Sending message to ticket: $ticket_id"
-    load_config
+    load_config_support
     # Make API call to send message
     response=$(curl -s -X POST -H "Authorization: Bearer $API_KEY" \
         -H "Content-Type: application/json" \
@@ -738,7 +850,7 @@ get_ticket() {
         echo "Usage: aeza ticket get [ticket_id]"
         return 1
     fi
-    load_config
+    load_config_support
 
     ticket_id="$1"
     # Get ticket details
@@ -802,6 +914,9 @@ case "$1" in
     "delete")
         delete_vm "$2"
         ;;
+    "rm")
+        delete_vm "$2"
+        ;;
     "products")
         list_products "$2"
         ;;
@@ -813,6 +928,24 @@ case "$1" in
         ;;
     "ssh")
         ssh_vm "$2" "${@:3}"
+        ;;
+    "key")
+        case "$2" in
+            "list")
+                list_ssh_keys "$2" "$3"
+                ;;
+            "add")
+                add_ssh_key "$3" "$4"
+                ;;
+            "delete")
+                delete_ssh_key "$3"
+                ;;
+            *)
+                echo "Error: Invalid ssh-key command"
+                echo "Usage: aeza key [list|add|delete] [key_id] [public_key]"
+                exit 1
+                ;;
+        esac
         ;;
     "wait")
         wait_vm "$2"
@@ -855,6 +988,7 @@ case "$1" in
         echo "  aeza ssh [vm_id/name/ip] [command] - connect to a virtual machine via SSH or execute a command"
         echo "  aeza wait [vm_id/name] - wait for a virtual machine to become active"
         echo "  aeza ip [vm_id/name] - get the IP address of a virtual machine"
+        echo "  aeza key [list|add|delete] [key_id] [public_key] - manage account SSH keys"
         echo ""
         exit 0
         ;;
