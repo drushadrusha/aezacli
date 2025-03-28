@@ -60,6 +60,15 @@ curl "$server_ip"
 aeza delete "$server_name"
 ```
 
+Script below checks for SWE-PROMO every 30 minutes and executes a command to purchase it if available, then exits.
+
+```bash
+while true; do
+    aeza products | grep -q "SWE-PROMO" && { aeza create SWE-PROMO ubuntu_2404 month; exit; }
+    sleep 1800
+done
+```
+
 # Autocompletions
 
 ```shell
